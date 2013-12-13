@@ -1,0 +1,60 @@
+#!/bin/bash
+
+export PATH=$PATH
+parent="$( cd "$(dirname "$0")" ; pwd -P )"
+source "$parent/parameters.conf"
+in_type=32
+mode="$1"
+
+path_mod(){
+		if [[ "$mode" == "i" ]]; then
+	        	path_recent="$file_recent"
+		elif [[ "$mode" == "r" ]]; then
+			path_recent="$diri"
+		fi
+
+                path_recent=${path_recent//\"/}
+                path_recent=${path_recent// /%20}
+                path_recent=${path_recent//(/\\(}
+                path_recent=${path_recent//)/\\)}
+                path_recent=${path_recent//[/%5B}
+                path_recent=${path_recent//]/%5D}
+                path_recent=${path_recent//./\\.}
+		path_recent=${path_recent//"//"/"/"}
+
+		if [[ "$mode" == "i" ]]; then
+			file_recent="$path_recent"
+		elif [[ "$mode" == "r" ]]; then
+			diri_recent="$path_recent"
+		fi
+}
+
+
+temp_file="$parent/.temp"
+if [[ "$mode" == "i" ]]; then
+	if [[ "$2" == "$in_type" ]]; then
+		file_recent="$3/$4"
+		path_mod
+		entry_start=`awk '$0 ~ str{print NR; exit}' str="$file_recent" "$RECENT_FILE"`
+		if [[ $entry_start =~ ^-?[0-9]+$ ]]; then
+			entry_end=`awk -v m=$entry_start ' NR >=m && $0 ~ str{print NR; exit}' str="</bookmark>" "$RECENT_FILE"`
+			echo "`awk -v m=$entry_start -v n=$entry_end 'm <= NR && NR <=n {next} {print}' "$RECENT_FILE"`" > "$RECENT_FILE"
+		fi
+	fi
+elif [[ "$mode" == "r" ]]; then
+	n_dir="$N_DIR"
+	for ((i = 1; i <= "$n_dir"; i++)); do
+		eval diri=\$DIR$i
+		path_mod
+		entry_start=`awk '$0 ~ str{print NR; exit}' str="$diri_recent" "$RECENT_FILE"`
+		if [[ $entry_start =~ ^-?[0-9]+$ ]]; then
+			cat "$RECENT_FILE" > "$temp_file"
+			while [[ $entry_start =~ ^-?[0-9]+$ ]]; do
+				entry_end=`awk -v m=$entry_start ' NR >= m && $0 ~ str{print NR; exit}' str="</bookmark>" "$temp_file"`
+				echo "`awk -v m=$entry_start -v n=$entry_end 'm <= NR && NR <= n {next} {print}' "$temp_file"`" > "$temp_file"
+				entry_start=`awk '$0 ~ str{print NR; exit}' str="$diri_recent" "$temp_file"`
+			done
+			cat "$temp_file" > "$RECENT_FILE"
+		fi
+	done
+fi

@@ -1,0 +1,30 @@
+#!/bin/bash
+
+current_user=`echo "$SUDO_USER"`
+
+echo "Removing current user table"
+`rm /var/spool/incron/"$current_user"`
+
+echo "Removing permission to the user"
+allow_path="/etc/incron.allow"
+user_list=`cat "$allow_path"`
+i=0
+IFS=$'\n' read -a users <<< "$user_list"
+for user in "${users[@]}"; do
+	if [[ "$user" == "$current_user" ]]; then
+		unset users["$i"]
+	fi
+	i=`expr "$i" + 1`
+done > "$allow_path"
+
+echo "Removing symbolic link"
+`rm /usr/bin/rff`
+
+echo "Enter the path of installation folder (0 for default path \"/opt/recent-ff\")"
+read install_path
+if [[ "$install_path" == "0" ]]; then
+	install_path="/opt/recent-ff"
+fi
+echo "Removing files"
+`rm -r "$install_path"`
+

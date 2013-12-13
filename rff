@@ -1,0 +1,215 @@
+#!/bin/bash
+
+list_check(){
+	dir_present=0
+	if [[ ! "$n_dir" == "0" ]]; then
+		for ((i = 1; i <= "$n_dir"; i++)); do
+			eval diri="\$DIR$i"
+			partial_path=""
+			IFS=/ read -a components <<< "$1"
+			for component in "${components[@]}"; do
+				partial_path="$partial_path$component/"
+				if [[ "$diri" == "$partial_path" || "$diri" == "${partial_path%/}" || "${diri%/}" == "$partial_path" ]]; then
+					dir_present="$i"
+					break 2
+				fi			
+			done			
+		done
+	fi
+	return $dir_present
+}
+
+create_table(){
+        subdir_path=$(find "$1" -type d);
+        parent_path=`echo "${parent// /\ }"`
+	IFS=$'\n' read -r -d '' -a subdirs <<< "$subdir_path"
+	n_subdirs="${#subdirs[@]}"
+	for diri in "${subdirs[@]}"; do
+                dir_pathi=`echo "${diri// /\ }"`
+		list_check "$diri"
+		dir_present=$?
+		if [[ $dir_present -gt 0 ]]; then
+			remove_table "$diri" "$dir_present"
+                fi
+		tee -a "$temp_table_path" > /dev/null <<< "$dir_pathi IN_OPEN $parent/rfftrigger "i" $& \"\$@\" \"\$#\""
+        done	
+	n_dir_new=`expr $n_dir + 1`
+	n_lines=`expr 3 \* $n_dir + 3`
+	parameters=`awk -v n=$n_lines 'NR >= n {next} {print}' "$parent/parameters.conf"`
+	echo -e "$parameters\nDIR"$n_dir_new"=\"$1\"\nDIR"$n_dir_new"ex=\"\"\nN_SUBDIR"$n_dir_new"="$n_subdirs"\nN_DIR="$n_dir_new"" > "$parent/parameters.conf";	
+	n_dir="$n_dir_new"
+	
+}
+
+remove_table(){
+	dir_pathi=`echo "${1// /\ }"`
+	line_start=0
+	for ((i = 1; i <= `expr $2 - 1`; i++)); do
+			eval n_subdiri="\$N_SUBDIR$i"
+			line_start=`expr $line_start + $n_subdiri`
+	done
+	eval n_subdir="\$N_SUBDIR$2"
+	line_start=`expr $line_start + 1`		
+	line_end=`expr $line_start + $n_subdir - 1`
+	line="`awk -v m=$line_start -v n=$line_end 'm <= NR && NR <= n {next} {print}' "$temp_table_path"`"
+	if [[ "$line" == "" ]]; then
+		bash -c "> '$temp_table_path'"
+	else
+		tee "$temp_table_path" > /dev/null <<< "$line"
+	fi
+
+	n_dir_new=`expr $n_dir - 1`
+	n_line_start=`expr 3 \* $2`
+	parameters=`awk -v n=$n_line_start 'NR >= n {next} {print}' "$parent/parameters.conf"`
+	echo "$parameters" > "$parent/parameters.conf"
+	for ((i = 1; i <= `expr $n_dir - $2`; i++)); do
+		j=`expr $2 + $i`
+		eval dirj=\$DIR$j
+		eval subdirj=\$N_SUBDIR$j
+		j_new=`expr $j - 1`
+		echo -e "DIR$j_new=\"$dirj\"\nDIR"$j_new"ex=\"\"\nN_SUBDIR$j_new="$subdirj"" >> "$parent/parameters.conf";
+	done
+	echo -e "N_DIR="$n_dir_new"" >> "$parent/parameters.conf"
+	n_dir="$n_dir_new"
+}
+
+current_user=$USER
+parentrff=`readlink "$0"`
+parent="${parentrff%*/rff}"
+temp_table_path="$parent/$current_user"
+logfile="$parent/.log"
+source "$parent/parameters.conf"
+recent_file="$RECENT_FILE"
+table_path="$TABLE_FILE"
+temp_recent_file="$parent/.temp"
+n_dir=$N_DIR
+while getopts :a:r:lcms: option; do
+case $option in
+		a) 	dir_path=$OPTARG
+			if [[ ! -d $dir_path ]]; then
+				echo "Directory not found"
+				echo "Please try again"
+			else
+				list_check "$dir_path"
+				if [[ $dir_present == 0 ]]; then
+					create_table "$dir_path"
+					echo `date`" added $dir_path" >> "$logfile"
+					echo "Directory successfully added"
+					echo "Tip: Run \"rff -s load\" to see the current settings in effect."
+					echo "Tip: Run \"rff -m\" to remove the already present files of this directory from recent log."
+				else
+					echo "Directory already present in the list"
+					echo "Please try again"
+				fi
+			fi
+			;;
+		r) 	dir_path=$OPTARG
+			if [[ ! -d $dir_path ]]; then
+				echo "Directory not found"
+				echo "Please try again"
+			else
+				list_check "$dir_path"
+				dir_present=$?
+				if [[ ! $dir_present == 0 ]]; then
+					eval diri=\$DIR$dir_present
+					if [[ "$diri" == "$dir_path" || "$diri" == "${dir_path%/}" || "${diri%/}" == "$dir_path" ]]; then
+						remove_table "$dir_path" "$dir_present"
+						echo `date`" removed $dir_path" >> "$logfile"
+						echo "Directory successfully removed"
+						echo "Tip: Run \"rff -s load\" to see the current settings in effect"
+					else
+						echo "A superdirectory of this directory found in the list. Feature is not supported yet."
+					fi
+				else
+					echo "Directory not found in the list"
+				fi
+			fi
+			;;
+		l)	if [[ $n_dir == 0 ]]; then
+				echo "No directories are currently present in the screening list"
+			else
+				for i in $(seq 1 $n_dir); do
+					eval diri=\$DIR$i
+					echo "$diri"
+				done
+			fi
+			;;
+		c)	echo "This will remove all the directories from the list. Continue? [y/n]"
+			read ans
+			if [[ "$ans" == "y" ]]; then
+				bash -c "> '$temp_table_path'"
+				echo "Loading Filter..."
+				sudo bash -c "cat '$temp_table_path' > '$table_path'"
+				isRunning=`sudo service incron status`
+				isRunning="${isRunning##*is }"
+				if [[ "$isRunning" == "running" ]]; then
+					echo "incron is still running, keep incron running? [y/n]"
+					read ans
+					if [[ "$ans" == "n" ]]; then
+						echo "Stopping incron"
+						echo `sudo service incron stop` > /dev/null
+					else
+						echo "Tip: incron can be stopped manually using \"service incron stop\""
+					fi
+				fi
+				lines=`awk -v n=3 'NR >= n {next} {print}' "$parent/parameters.conf"`
+				echo -e "$lines\nN_DIR="0"" >  "$parent/parameters.conf"
+				echo `date`" cleared all" >> "$logfile"
+				echo "All the directories successfully removed"
+			elif [[ "$ans" == "n" ]]; then
+				echo "All the entries are entact!"
+			else
+				echo "Not a valid answer"
+			fi
+			;;
+		m)	`"$parent/rfferase" r`
+			;;
+		s) 	action="$OPTARG"
+			if [[ "$action" == "load" ]]; then
+				echo "Loading Filter..."
+				sudo bash -c "cat '$temp_table_path' > '$table_path'"
+				isRunning=`sudo service incron status`
+				isRunning="${isRunning##*is }"
+				if [[ "$isRunning" == "not running" ]]; then
+					echo "incron is not running, start incron? [y/n]"
+					read ans
+					if [[ "$ans" == "y" ]]; then
+						echo "Starting incron"
+						echo `sudo service incron start` > /dev/null
+					else
+						echo "Tip: incron can be started manually using \"service incron start\""
+					fi
+				fi
+			elif [[ "$action" == "unload" ]]; then
+				echo "Unloading filter..."
+				sudo bash -c "> '$table_path'"
+				isRunning=`sudo service incron status`
+				isRunning="${isRunning##*is }"
+				if [[ "$isRunning" == "running" ]]; then
+					echo "incron is still running, keep incron running? [y/n]"
+					read ans
+					if [[ "$ans" == "n" ]]; then
+						echo "Stopping incron"
+						echo `sudo service incron stop` > /dev/null
+					else
+						echo "Tip: incron can be stopped manually using \"service incron stop\""
+					fi
+				fi
+			elif [[ "$action" == "status" ]]; then
+				if [[ -s "$table_path" ]]; then
+					echo "Filter is loaded"
+				else
+					echo "Filter is not loaded"
+				fi
+			elif [[ "$action" == "log" ]]; then
+				cat "$logfile"
+			elif [[ "$action" == "clearlog" ]]; then
+				bash -c "> '$logfile'"
+			else
+				echo "invalid argument"
+			fi
+			;;
+		?) 	echo "wrong option or argument"
+			;;
+	esac
+done

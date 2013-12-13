@@ -1,0 +1,12 @@
+#!/bin/bash
+
+parent="$( cd "$(dirname "$0")" ; pwd -P )"
+
+isRunning=`pidof -x "rfferase"`
+if [[ -z "$isRunning" ]]; then
+	sleep 2s
+	`"$parent"/rfferase "$1" "$2" "$3" "$4"`
+	sleep 2s
+else
+	sleep 2s
+fi

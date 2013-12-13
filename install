@@ -1,0 +1,54 @@
+#!/bin/bash
+
+parent="$( cd "$(dirname "$0")" ; pwd -P )"
+incron_path="/usr/bin/incrontab"
+if [[ -f $incron_path ]]; then
+	echo "Enter the path of installation directory (Enter 0 for default /opt/):";
+	read install_path;
+	if [[ $install_path == 0 ]]; then
+		install_path="/opt";
+	fi
+	if [[ ! -d $install_path ]]; then
+		echo "Specified directory not found"
+		echo "Please try again"
+	else
+		current_user=`echo "$SUDO_USER"`
+		`mkdir "$install_path/recent-ff"`
+		echo "Copying files..."
+		#echo `tar -zxvf "$parent/recent-ff.tar.gz" -C "$install_path/recent-ff"` > /dev/null
+		echo `cp "$parent/rfferase" "$install_path/recent-ff"` > /dev/null
+		echo `cp "$parent/rfftrigger" "$install_path/recent-ff"` > /dev/null
+		echo `cp "$parent/rff" "$install_path/recent-ff"` > /dev/null
+		`touch "$install_path/recent-ff/parameters.conf"`
+		`touch "$install_path/recent-ff/.temp"`
+		`touch "$install_path/recent-ff/$current_user"`
+		`touch "$install_path/recent-ff/.log"`
+	
+		`chown "$current_user" -R "$install_path/recent-ff"`
+		`chmod 700 -R "$install_path/recent-ff/"`
+		`ln -s "$install_path/recent-ff/rff" "/usr/bin/rff"`
+
+		allow_path="/etc/incron.allow"
+		table_path="/var/spool/incron/$current_user"
+		user_list=`cat "$allow_path"`
+		user_present=0
+
+		IFS=$'\n' read -a users <<< "$user_list"
+		for user in "${users[@]}"; do
+			if [[ "$user" == "$current_user" ]]; then
+				user_present=1
+				break
+			fi
+		done
+		if [[ $user_present == 0 ]]; then
+			tee -a "$allow_path" > /dev/null <<< "$current_user"
+			`touch "$table_path"`
+			echo "Permission granted to the user"
+		fi
+		recent_file="$HOME/.local/share/recently-used.xbel"
+		temp_recent_file="$install_path/recent-ff/.temp"
+		echo -e "RECENT_FILE=\"$recent_file\"\nTABLE_FILE=\"$table_path\"\nN_DIR="0"" > "$install_path/recent-ff/parameters.conf"
+	fi
+else
+	echo "incrontab not installed"
+fi
